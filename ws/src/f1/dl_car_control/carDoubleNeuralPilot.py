@@ -19,7 +19,7 @@ from torchvision import transforms
 package_path = "/home/juan/ros2_ws/src/f1/dl_car_control"
 sys.path.append(package_path + "/include")
 from models import pilotNet
-from data import dataset_transforms, DATA_PATH
+from include.rosbag_preview import dataset_transforms
 
 
 # Limit velocitys

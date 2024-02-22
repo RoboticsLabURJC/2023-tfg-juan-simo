@@ -172,10 +172,17 @@ class carController(Node):
                 angular = (((distance - MIN_PIXEL) * self.ang_rang) / self.px_rang) + (-MAX_ANGULAR)
                 angular_vel = self.angular_pid.get_pid(angular)
 
+
                 # Inverse of angular vel and we convert it to linear velocity
                 angular_inv = MAX_ANGULAR - abs(angular_vel)    # 0 - MAX_ANGULAR
                 linear = (((angular_inv) * self.lin_rang) / MAX_ANGULAR) + MIN_LINEAR
                 linear_vel = self.linear_pid.get_pid(linear)
+                
+                if abs(angular_vel) < 0.15:
+                    linear_vel = linear_vel*2
+                elif abs(angular_vel) < 0.22:
+                    linear_vel = linear_vel*1.3
+                
                 
 
                 vel_msg = Twist()

@@ -18,8 +18,8 @@ from torchvision import transforms
 
 package_path = "/home/juan/ros2_ws/src/f1/dl_car_control"
 sys.path.append(package_path + "/include")
-from models import pilotNet
-from data import dataset_transforms, DATA_PATH
+from include.models import pilotNet
+from include.rosbag_preview import dataset_transforms
 
 
 # Limit velocitys
@@ -27,10 +27,9 @@ MAX_ANGULAR = 4.5
 MAX_LINEAR = 9 
 MIN_LINEAR = 1
 
-MODEL_PATH = "/home/juan/ros2_ws/src/f1/dl_car_control/models/first_model.tar"
-MODEL_PATH_A = "/home/juan/ros2_ws/src/f1/dl_car_control/models/2agressive.tar"
-MODEL_PATH_S = "/home/juan/ros2_ws/src/f1/dl_car_control/models/selection.tar"
-
+MODEL_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/models/E2/Curves.tar"
+MODEL_PATH_A = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/models/E2/Straight.tar"
+MODEL_PATH_S = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/models/E2/Select.tar"
 
 def load_checkpoint(path, model: pilotNet, optimizer: optim.Optimizer = None):
     checkpoint = torch.load(path)
@@ -85,7 +84,7 @@ class carController(Node):
 
         vel_msg = Twist()
 
-        if model_to_use < 1.75:
+        if model_to_use < 1.5:
             vel_msg.angular.z = float(vel_a[1])
             vel_msg.linear.x = float(vel_a[0])
             model_used = "agro"

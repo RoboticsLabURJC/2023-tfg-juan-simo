@@ -1,140 +1,178 @@
 #!/usr/bin/env python3
 
-from itertools import islice
-from torch.utils.tensorboard import SummaryWriter
-from torch import nn
 import torch
-from torch.serialization import save
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+import torch.nn as nn
 import torch.optim as optim
-import sys
-from models import pilotNet
-import keyboard
-from data_selection import rosbagDataset, dataset_transforms, DATA_PATH
-import ament_index_python
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
+import torchvision
+from torchvision import transforms
+from torch.utils.data import DataLoader, SubsetRandomSampler
+from torch.utils.tensorboard import SummaryWriter
+import os
+from data_loader import *
+from pylotnet_dataset import PilotNetDataset
+from Reference.pilotnet import PilotNet
+from Reference.transform_helper import createTransform
+
+import argparse
+from PIL import Image
+
+import json
+import numpy as np
+import cv2
+from copy import deepcopy
+from tqdm import tqdm
+from data_to_csv import CSV_PATH
+
 
 writer = SummaryWriter()
 
-package_path = "/home/juan/ros2_ws/src/f1/dl_car_control"
-CHECKPOINT_PATH = "/home/juan/ros2_ws/src/f1/dl_car_control/check_point/network.tar"
+package_path = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control"
+CHECKPOINT_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/check_point"
+
+if __name__=="__main__":
 
 
-def should_resume():
-    return "--resume" in sys.argv or "-r" in sys.argv
+    # Base Directory
+    path_to_data = CSV_PATH
+    base_dir = package_path
+    model_save_dir = CHECKPOINT_PATH
+    log_dir = base_dir + '/log'
 
+    # Hyperparameters
+    augmentations = []#'all'
+    num_epochs = 100
+    batch_size = 100
+    learning_rate = 1e-4
+    val_split = 0.1
+    shuffle_dataset = True
+    save_iter = 100
+    random_seed = 121
+    print_terminal = True
+    
+    preprocess = 'crop' + 'extreme'
 
-def save_checkpoint(model: pilotNet, optimizer: optim.Optimizer):
-    torch.save({
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }, CHECKPOINT_PATH)
+    # Device Selection (CPU/GPU)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    FLOAT = torch.FloatTensor
 
+    # Tensorboard Initialization
+    writer = SummaryWriter(log_dir)
 
-def load_checkpoint(model: pilotNet, optimizer: optim.Optimizer = None):
-    checkpoint = torch.load(CHECKPOINT_PATH)
+    # Define data transformations
+    transformations = createTransform(augmentations)
+    # Load data
+    dataset = PilotNetDataset(path_to_data, transformations, preprocessing=preprocess)
 
-    model.load_state_dict(checkpoint["model_state_dict"])
+    # Creating data indices for training and validation splits:
+    dataset_size = len(dataset)
+    indices = list(range(dataset_size))
+    split = int(np.floor(val_split * dataset_size))
+    if shuffle_dataset :
+        np.random.seed(random_seed)
+        np.random.shuffle(indices)
+    train_indices, val_split = indices[split:], indices[:split]
 
-    if optimizer != None:
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    # Creating PT data samplers and loaders:
+    train_sampler = SubsetRandomSampler(train_indices)
+    test_sampler = SubsetRandomSampler(val_split)
 
+    train_loader = DataLoader(dataset, batch_size=batch_size, sampler=train_sampler)
+    val_loader = DataLoader(dataset, batch_size=batch_size, sampler=test_sampler)
 
-def evaluate(model, test_loader, criterion):
-    model.eval()  # Cambia el modelo a modo de evaluación
-    total_loss = 0
-    with torch.no_grad():  # No necesitamos calcular gradientes
-        for data in test_loader:
-            label, image = data
-            outputs = model(image)
-            loss = criterion(outputs, label)
-            total_loss += loss.item()
-    return total_loss / len(test_loader)
-
-
-
-def train(model: pilotNet, optimizer: optim.Optimizer):
-
+    # Load Model
+    pilotModel = PilotNet(dataset.image_shape, dataset.num_labels).to(device)
+    if os.path.isfile( model_save_dir + '/pilot_net_model_{}.ckpt'.format(random_seed)):
+        pilotModel.load_state_dict(torch.load(model_save_dir + '/pilot_net_model_{}.ckpt'.format(random_seed),map_location=device))
+        last_epoch = json.load(open(model_save_dir+'/args.json',))['last_epoch']+1
+    else:
+        last_epoch = 0
+    last_epoch = 0
+    # Loss and optimizer
     criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(pilotModel.parameters(), lr=learning_rate)
 
-    dataset = rosbagDataset(DATA_PATH, dataset_transforms)
+    # Train the model
+    total_step = len(train_loader)
+    global_iter = 0
+    global_val_mse = 1e+5
 
-    train_dataset, test_dataset = train_test_split(dataset, test_size=0.25)
-    train_loader = DataLoader(train_dataset, batch_size=50, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=50, shuffle=False)
-    # train_loader = DataLoader(dataset, batch_size=50, shuffle=True)
 
-    train_losses = []
-    test_losses = []
-
-    for epoch in range(200):
-
-        running_loss = 0.0
-
-        for i, data in enumerate(train_loader, 0):
-
-            # get the inputs; data is a list of [inputs, labels]
-            label, image = data
-
-            # zero the parameter gradients
+    print("*********** Training Started ************")
+    for epoch in range(last_epoch, num_epochs):
+        pilotModel.train()
+        train_loss = 0
+        for i, (images, labels) in enumerate(train_loader):
+            
+            # print("NO FLOAT ", labels[1], " FLOAT ", labels[1].float())
+            images = FLOAT(images).to(device)
+            labels = FLOAT(labels.float()).to(device)
+            
+            # Run the forward pass
+            outputs = pilotModel(images)
+            loss = criterion(outputs, labels)
+            current_loss = loss.item()
+            train_loss += current_loss
+            # Backprop and perform Adam optimisation
             optimizer.zero_grad()
-
-            # forward + backward + optimize
-            outputs = model(image)
-            loss = criterion(outputs, label)
-            writer.add_scalar("Loss/train", loss, epoch)
             loss.backward()
             optimizer.step()
 
-            # print statistics
-            running_loss += loss.item()
-            if i % 10 == 0:    # print every 2000 mini-batches
-                print('[%d, %5d] loss: %.3f' %
-                      (epoch + 1, i + 1, running_loss / (2000)))
-                running_loss = 0.0
+            if global_iter % save_iter == 0:
+                torch.save(pilotModel.state_dict(), model_save_dir + '/pilot_net_model_{}.ckpt'.format(random_seed))
+            global_iter += 1
 
-                save_checkpoint(model, optimizer)
+            if print_terminal and (i + 1) % 10 == 0:
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'
+                    .format(epoch + 1, num_epochs, i + 1, total_step, loss.item()))
         
-        # Registrar error de entrenamiento
-        train_loss = running_loss / len(train_loader)
-        train_losses.append(train_loss)
+        # add entry of last epoch                            
+        with open(model_save_dir+'/args.json', 'w') as fp:
+            json.dump({'last_epoch': epoch}, fp)
 
-        # Registrar error de prueba
-        test_loss = evaluate(model, test_loader, criterion)
-        test_losses.append(test_loss)
+        writer.add_scalar("performance/train_loss", train_loss/len(train_loader), epoch+1)
+
+        # Validation 
+        pilotModel.eval()
+        with torch.no_grad():
+            val_loss = 0 
+            for images, labels in val_loader:
+                images = FLOAT(images).to(device)
+                labels = FLOAT(labels.float()).to(device)
+                outputs = pilotModel(images)
+                val_loss += criterion(outputs, labels).item()
+                
+            val_loss /= len(val_loader) # take average
+            writer.add_scalar("performance/valid_loss", val_loss, epoch+1)
+
+        # compare
+        if val_loss < global_val_mse:
+            global_val_mse = val_loss
+            best_model = deepcopy(pilotModel)
+            torch.save(best_model.state_dict(), model_save_dir + '/pilot_net_model_best_{}.pth'.format(random_seed))
+            mssg = "Model Improved!!"
+        else:
+            mssg = "Not Improved!!"
+
+        print('Epoch [{}/{}], Validation Loss: {:.4f}'.format(epoch + 1, num_epochs, val_loss), mssg)
                 
 
-    print('Finished Training')
-
-    plt.plot(train_losses, label='Training loss')
-    plt.plot(test_losses, label='Test loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.show()
-
-
-if __name__ == "__main__":
-    model = pilotNet()
-    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0)
-
-    if should_resume():
-        load_checkpoint(model, optimizer)
-
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps"
-        if torch.backends.mps.is_available()
-        else "cpu"
-    )   
-    print(f"Using {device} device")
-    model.to(device)
-    model.train(True)
-
-    train(
-        model,
-        optimizer,
-    )
+    pilotModel = best_model # allot the best model on validation 
+    # Test the model
+    # transformations_val = createTransform([]) # only need Normalize()
+    # test_set = PilotNetDataset(args.test_dir, transformations_val, preprocessing=preprocess)
+    # test_loader = DataLoader(test_set, batch_size=batch_size)
+    # print("Check performance on testset")
+    # pilotModel.eval()
+    # with torch.no_grad():
+    #     test_loss = 0
+    #     for images, labels in tqdm(test_loader):
+    #         images = FLOAT(images).to(device)
+    #         labels = FLOAT(labels.float()).to(device)
+    #         outputs = pilotModel(images)
+    #         test_loss += criterion(outputs, labels).item()
+    
+    # writer.add_scalar('performance/Test_MSE', test_loss/len(test_loader))
+    # print(f'Test loss: {test_loss/len(test_loader)}')
+        
+    # Save the model and plot
+    torch.save(pilotModel.state_dict(), model_save_dir + '/pilot_net_model_{}.ckpt'.format(random_seed))

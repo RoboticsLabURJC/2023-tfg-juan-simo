@@ -18,17 +18,18 @@ from torchvision import transforms
 
 package_path = "/home/juan/ros2_ws/src/f1/dl_car_control"
 sys.path.append(package_path + "/include")
-from models import pilotNet
-from data import dataset_transforms, DATA_PATH
+from include.models import pilotNet
+from include.Reference.pilotnet import PilotNet
+from include.rosbag_preview import dataset_transforms
+import cv2
 
 
 # Limit velocitys
 MAX_ANGULAR = 4.5 
-MAX_LINEAR = 9 
+MAX_LINEAR = 12
 MIN_LINEAR = 1
 
-MODEL_PATH = "/home/juan/ros2_ws/src/f1/dl_car_control/models/first_model.tar"
-MODEL_PATH_A = "/home/juan/ros2_ws/src/f1/dl_car_control/models/agressive.tar"
+MODEL_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/models/E2/pilot_net_model_121.ckpt"
 
 def load_checkpoint(model: pilotNet, optimizer: optim.Optimizer = None):
     checkpoint = torch.load(MODEL_PATH)
@@ -49,9 +50,7 @@ class carController(Node):
         self.img = None
 
         # Neural network
-        self.model = pilotNet()
-        load_checkpoint(self.model)
-
+        self.model = PilotNet([200, 66, 3], 2)
         self.device = torch.device("cuda:0")
         self.model.to(self.device)
 
@@ -61,7 +60,17 @@ class carController(Node):
     def listener_callback(self, msg):
         bridge = CvBridge()
         self.img = bridge.imgmsg_to_cv2(msg, "bgr8")
-        img_tensor = dataset_transforms(self.img).to(self.device)
+        
+        # Cut the superior (upper) half of the image
+        half_height = self.img.shape[0] // 2
+        bottom_half = self.img[half_height:, :, :]
+        
+        # # Mostrar la imagen
+        # cv2.imshow('Imagen', bottom_half)
+        # # Esperar a que el usuario presione una tecla para cerrar la ventana
+        # cv2.waitKey(0)
+        
+        img_tensor = dataset_transforms(bottom_half).to(self.device)
         img_tensor = img_tensor.unsqueeze(0)
 
         # Image inference
@@ -79,8 +88,8 @@ class carController(Node):
         vel_msg.angular.z = float(vel[1])
 
         # usefull for training others
-        if abs(float(vel[1])) < 0.2:
-            vel_msg.linear.x = 9.0
+        # if abs(float(vel[1])) < 0.2:
+        #     vel_msg.linear.x = 9.0
 
         if self.dt == 10: 
             print("linear speed: ", vel_msg.linear.x, "; angular speed: ", vel_msg.angular.z)
