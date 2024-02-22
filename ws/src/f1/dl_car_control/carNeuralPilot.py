@@ -51,8 +51,14 @@ class carController(Node):
 
         # Neural network
         self.model = PilotNet([200, 66, 3], 2)
+        self.model.load_state_dict(torch.load(MODEL_PATH))
+        
+        # self.model = pilotNet()
+        # load_checkpoint(self.model)
+
         self.device = torch.device("cuda:0")
         self.model.to(self.device)
+
 
         self.dt = 0
 
