@@ -21,26 +21,27 @@ import numpy as np
 import cv2
 from copy import deepcopy
 from tqdm import tqdm
-from data_to_csv import CSV_PATH
 
 
 writer = SummaryWriter()
 
 package_path = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control"
+CSV_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/csvs"
 CHECKPOINT_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/check_point"
 
 if __name__=="__main__":
 
 
     # Base Directory
-    path_to_data = CSV_PATH
+    path_to_data = CSV_PATH + '/Many_Curves_E2'
+    test_dir = CSV_PATH + '/Simple_E2'
     base_dir = package_path
     model_save_dir = CHECKPOINT_PATH
     log_dir = base_dir + '/log'
 
     # Hyperparameters
     augmentations = []#'all'
-    num_epochs = 100
+    num_epochs = 50
     batch_size = 100
     learning_rate = 1e-4
     val_split = 0.1
@@ -49,7 +50,7 @@ if __name__=="__main__":
     random_seed = 121
     print_terminal = True
     
-    preprocess = 'crop' + 'extreme'
+    preprocess = 'crop' + 'normal'
 
     # Device Selection (CPU/GPU)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -60,6 +61,10 @@ if __name__=="__main__":
 
     # Define data transformations
     transformations = createTransform(augmentations)
+    
+    # transformations = transforms.Compose([
+    #         transforms.ToTensor()
+    #     ])
     # Load data
     dataset = PilotNetDataset(path_to_data, transformations, preprocessing=preprocess)
 
@@ -98,24 +103,37 @@ if __name__=="__main__":
 
 
     print("*********** Training Started ************")
+    train_losses = []
+    test_losses = []
     for epoch in range(last_epoch, num_epochs):
         pilotModel.train()
-        train_loss = 0
+        running_loss = 0
         for i, (images, labels) in enumerate(train_loader):
             
-            # print("NO FLOAT ", labels[1], " FLOAT ", labels[1].float())
+            # print("Velocidades ", labels[1])
+            # # Mostrar la imagen
+            # cv2.imshow('Imagen', images[1])
+            # # Esperar a que el usuario presione una tecla para cerrar la ventana
+            # cv2.waitKey(0)
+
             images = FLOAT(images).to(device)
             labels = FLOAT(labels.float()).to(device)
+            
+            
+            # zero the parameter gradients
+            optimizer.zero_grad()
             
             # Run the forward pass
             outputs = pilotModel(images)
             loss = criterion(outputs, labels)
-            current_loss = loss.item()
-            train_loss += current_loss
+            writer.add_scalar("Loss/train", loss, epoch+1)
+            
             # Backprop and perform Adam optimisation
-            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            
+            current_loss = loss.item()
+            running_loss += current_loss
 
             if global_iter % save_iter == 0:
                 torch.save(pilotModel.state_dict(), model_save_dir + '/pilot_net_model_{}.ckpt'.format(random_seed))
@@ -129,7 +147,6 @@ if __name__=="__main__":
         with open(model_save_dir+'/args.json', 'w') as fp:
             json.dump({'last_epoch': epoch}, fp)
 
-        writer.add_scalar("performance/train_loss", train_loss/len(train_loader), epoch+1)
 
         # Validation 
         pilotModel.eval()
@@ -143,6 +160,13 @@ if __name__=="__main__":
                 
             val_loss /= len(val_loader) # take average
             writer.add_scalar("performance/valid_loss", val_loss, epoch+1)
+        
+        # Registrar error de entrenamiento
+        train_loss = running_loss / len(train_loader)
+        train_losses.append(train_loss)
+
+        # Registrar error de prueba
+        test_losses.append(val_loss)
 
         # compare
         if val_loss < global_val_mse:
@@ -154,25 +178,34 @@ if __name__=="__main__":
             mssg = "Not Improved!!"
 
         print('Epoch [{}/{}], Validation Loss: {:.4f}'.format(epoch + 1, num_epochs, val_loss), mssg)
+        
+    print('Finished Training')
+
+    plt.plot(train_losses, label='Training loss')
+    plt.plot(test_losses, label='Test loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
                 
 
     pilotModel = best_model # allot the best model on validation 
     # Test the model
-    # transformations_val = createTransform([]) # only need Normalize()
-    # test_set = PilotNetDataset(args.test_dir, transformations_val, preprocessing=preprocess)
-    # test_loader = DataLoader(test_set, batch_size=batch_size)
-    # print("Check performance on testset")
-    # pilotModel.eval()
-    # with torch.no_grad():
-    #     test_loss = 0
-    #     for images, labels in tqdm(test_loader):
-    #         images = FLOAT(images).to(device)
-    #         labels = FLOAT(labels.float()).to(device)
-    #         outputs = pilotModel(images)
-    #         test_loss += criterion(outputs, labels).item()
+    transformations_val = createTransform([]) # only need Normalize()
+    test_set = PilotNetDataset(test_dir, transformations_val, preprocessing=preprocess)
+    test_loader = DataLoader(test_set, batch_size=batch_size)
+    print("Check performance on testset")
+    pilotModel.eval()
+    with torch.no_grad():
+        test_loss = 0
+        for images, labels in tqdm(test_loader):
+            images = FLOAT(images).to(device)
+            labels = FLOAT(labels.float()).to(device)
+            outputs = pilotModel(images)
+            test_loss += criterion(outputs, labels).item()
     
-    # writer.add_scalar('performance/Test_MSE', test_loss/len(test_loader))
-    # print(f'Test loss: {test_loss/len(test_loader)}')
+    writer.add_scalar('performance/Test_MSE', test_loss/len(test_loader))
+    print(f'Test loss: {test_loss/len(test_loader)}')
         
     # Save the model and plot
     torch.save(pilotModel.state_dict(), model_save_dir + '/pilot_net_model_{}.ckpt'.format(random_seed))

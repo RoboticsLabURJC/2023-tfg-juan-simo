@@ -6,6 +6,11 @@ from tqdm import tqdm
 import csv
 
 import matplotlib.pyplot as plt
+from albumentations import Compose, Affine, ReplayCompose
+
+MAX_ANGULAR = 4.5 # 5 Nürburgring line
+MAX_LINEAR = 20 # 12 in some maps be fast
+MIN_LINEAR = 3
 
 
 def load_data(folder):
@@ -60,12 +65,48 @@ def parse_csv(data, array):
 
     return array
 
+def afine_data(array, imgs):
+    
+    augment = ReplayCompose([
+        Affine(p=0.5, rotate=0, translate_percent={'x':(-0.2, 0.2)})
+    ])
+    
+    new_imgs = []
+    new_array = []
+    for i in tqdm(range(len(imgs))):
+        aug = augment(image=imgs[i])
+        augmented_img = aug["image"]
+        new_imgs.append(augmented_img)
+        if aug["replay"]["transforms"][0]["applied"] == True:
+            x_transformation_value = aug["replay"]["transforms"][0]["translate_percent"]["x"][1]
+            value = aug["replay"]["transforms"][0]["params"]["matrix"].params[0][2]
+            new_value = value / 10 * x_transformation_value
+            new_array.append((array[i][0], array[i][1] + new_value))
+            
+            # print("Old: ", array[i], "; New: ", new_array[i])
+            # cv2.imshow('Imagen', imgs[i])
+            # cv2.imshow('Imagen2', augmented_img)
+            # # Esperar a que el usuario presione una tecla para cerrar la ventana
+            # cv2.waitKey(0)
+        else:
+            # If no transformation applied, keep original values
+            new_array.append(array[i])
+            
+            
+    ret_array = array + new_array
+    ret_array_imgs = imgs + new_imgs
+    return ret_array, ret_array_imgs
+
 def preprocess_data(array, imgs, data_type):
     # Data augmentation
     # Take the image and just flip it and negate the measurement
     flip_imgs = []
     array_flip = []
     for i in tqdm(range(len(imgs))):
+        # cv2.imshow('Imagen', imgs[i])
+        # cv2.imshow('Imagen2', cv2.flip(imgs[i], 1))
+        # # Esperar a que el usuario presione una tecla para cerrar la ventana
+        # cv2.waitKey(0)
         flip_imgs.append(cv2.flip(imgs[i], 1))
         array_flip.append((array[i][0], -array[i][1]))
     new_array = array + array_flip
@@ -89,7 +130,6 @@ def preprocess_data(array, imgs, data_type):
         new_array_imgs += extreme_case_1_img*5 + extreme_case_2_img*10
 
     new_array = normalize_annotations(new_array)
-
     return new_array, new_array_imgs
 
 def normalize_annotations(array_annotations):
@@ -106,8 +146,8 @@ def normalize_annotations(array_annotations):
     array_annotations_w = np.stack(array_annotations_w, axis=0)
     array_annotations_w = array_annotations_w.reshape(-1, 1)
 
-    normalized_X = normalize(array_annotations_v, min=6.5, max=24)
-    normalized_Y = normalize(array_annotations_w, min=-7.1, max=7.1)
+    normalized_X = normalize(array_annotations_v, min=MIN_LINEAR, max=MAX_LINEAR)
+    normalized_Y = normalize(array_annotations_w, min=-MAX_ANGULAR, max=MAX_ANGULAR)
 
     normalized_annotations = []
     for i in range(0, len(normalized_X)):
@@ -124,3 +164,4 @@ def check_path(path):
         print(f"{path} not exist")
         os.makedirs(path)
         print(f"Create {path} success")
+        

@@ -22,14 +22,15 @@ from include.models import pilotNet
 from include.Reference.pilotnet import PilotNet
 from include.rosbag_preview import dataset_transforms
 import cv2
+import numpy as np
 
 
 # Limit velocitys
 MAX_ANGULAR = 4.5 
-MAX_LINEAR = 12
-MIN_LINEAR = 1
+MAX_LINEAR = 20 
+MIN_LINEAR = 3
 
-MODEL_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/models/E2/pilot_net_model_121.ckpt"
+MODEL_PATH = "/home/juan/ros2_tfg_ws/src/f1/dl_car_control/models/E2_2/pilot_net_model_121_afine.ckpt"
 
 def load_checkpoint(model: pilotNet, optimizer: optim.Optimizer = None):
     checkpoint = torch.load(MODEL_PATH)
@@ -38,6 +39,12 @@ def load_checkpoint(model: pilotNet, optimizer: optim.Optimizer = None):
 
     if optimizer != None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        
+        
+
+def denormalize(normalized_value, min, max):
+    return (normalized_value * (max - min)) + min
+
 
 class carController(Node):
 
@@ -53,13 +60,14 @@ class carController(Node):
         self.model = PilotNet([200, 66, 3], 2)
         self.model.load_state_dict(torch.load(MODEL_PATH))
         
+        
         # self.model = pilotNet()
         # load_checkpoint(self.model)
 
         self.device = torch.device("cuda:0")
         self.model.to(self.device)
 
-
+        self.norm = True
         self.dt = 0
 
 
@@ -71,27 +79,46 @@ class carController(Node):
         half_height = self.img.shape[0] // 2
         bottom_half = self.img[half_height:, :, :]
         
+        img = cv2.resize(bottom_half, (int(200), int(66)))
+        
         # # Mostrar la imagen
         # cv2.imshow('Imagen', bottom_half)
         # # Esperar a que el usuario presione una tecla para cerrar la ventana
         # cv2.waitKey(0)
+        preprocess = transforms.Compose([
+            transforms.ToTensor()
+        ])
         
-        img_tensor = dataset_transforms(bottom_half).to(self.device)
+        img_tensor = preprocess(img).to(self.device)
         img_tensor = img_tensor.unsqueeze(0)
 
         # Image inference
         with torch.no_grad():
             predictions = self.model(img_tensor)
+        
+        vel = predictions[0].tolist()
+        if self.norm:
+            v = denormalize(vel[0], MIN_LINEAR, MAX_LINEAR)
+            w = denormalize(vel[1], -MAX_ANGULAR, MAX_ANGULAR)
+        else:
+            v = vel[0]
+            w = vel[1]
+        
+        # Apply constraints to linear velocity
+        linear_velocity = max(min(v, MAX_LINEAR), MIN_LINEAR)
+
+        # Apply constraints to angular velocity
+        angular_velocity = max(min(w, MAX_ANGULAR), -MAX_ANGULAR)
 
         # Velocity set
-        vel = predictions[0].tolist()
+
         vel_msg = Twist()
-        vel_msg.linear.x = float(vel[0])
+        vel_msg.linear.x = float(linear_velocity)
         vel_msg.linear.y = 0.0
         vel_msg.linear.z = 0.0
         vel_msg.angular.x = 0.0
         vel_msg.angular.y = 0.0
-        vel_msg.angular.z = float(vel[1])
+        vel_msg.angular.z = float(angular_velocity)
 
         # usefull for training others
         # if abs(float(vel[1])) < 0.2:

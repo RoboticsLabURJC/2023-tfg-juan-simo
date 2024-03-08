@@ -32,7 +32,10 @@ class PilotNetDataset(Dataset):
         self.images = get_images(all_images, type_image, self.images)
         self.labels = parse_csv(all_data, self.labels)
 
-        # self.labels, self.images = preprocess_data(self.labels, self.images, data_type)
+        self.labels, self.images = afine_data(self.labels, self.images)
+
+        self.labels, self.images = preprocess_data(self.labels, self.images, data_type)
+        
         
         self.transforms = transforms
 
@@ -40,6 +43,7 @@ class PilotNetDataset(Dataset):
         self.num_labels = np.array(self.labels[0]).shape[0]
 
         self.count = len(self.images)
+        print("Images = ", len(self.images), "; Labels = ", len(self.labels))
         
     def __getitem__(self, index):
 
