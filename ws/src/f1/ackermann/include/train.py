@@ -126,8 +126,10 @@ if __name__=="__main__":
     
     datasets = {
         "Montmelo_ACK": 7,
+        "Montmelo_ACK_Dizzy": 2,
         "Montmelo_ACK_inv": 7,
         "Simple_ACK_inv": 3,
+        "Simple_ACK_Dizzy": 1,
         "Hard_cases_ACK": 20,
     }
 
