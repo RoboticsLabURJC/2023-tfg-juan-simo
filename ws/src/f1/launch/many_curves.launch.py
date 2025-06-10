@@ -16,7 +16,7 @@ def generate_launch_description():
   pkg_share = FindPackageShare(package='f1_cars').find('f1_cars')
  
   # Set the path to the world file
-  world_file_name = 'many_curves.world'
+  world_file_name = 'big_many_curves.world'
   world_path = os.path.join(pkg_share, 'worlds', world_file_name)
    
   # Set the path to the SDF model files.

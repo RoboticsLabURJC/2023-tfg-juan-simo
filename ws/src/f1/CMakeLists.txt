@@ -64,6 +64,15 @@ install(DIRECTORY
   models/montreal_line
   models/nurburgring_line
   models/simple_circuit
+  
+  models/autocar
+  models/f1_renault_ackerman
+  models/f1_renault_camera
+  models/big_simple_circuit
+  models/big_montmelo_line
+  models/big_montreal_line
+  models/big_nurburgring_line
+  models/big_many_curves
   DESTINATION ${GAZEBO_MODEL_PATH})
 
 ament_package()
